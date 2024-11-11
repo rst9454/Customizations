@@ -36,3 +36,78 @@ https://www.youtube.com/watch?v=B9zHW2vG7qI
 https://datatables.net/forums/discussion/27216/how-to-get-the-parameters-on-mvc-controller-send-by-ajax-serverside-datatable-1-10
 https://datatables.net/forums/discussion/75515/data-table-with-server-side-processing-returns-same-set-of-data-rows-on-pagination
 https://datatables.net/forums/discussion/63279/how-to-form-a-proper-response-message-in-server-side-processing-in-net-core-mvc //Datatable Using Stored Procedure
+
+
+public async Task<MasterResponseVM<List<GetAllAttendanceVM>>> GetAllAttendanceForUser(string userId, DateTime startDate, DateTime endDate)
+{
+    var today = DateTime.Now.Date;
+    var result = new List<GetAllAttendanceVM>();
+
+    try
+    {
+        // Fetch logs for the specific user within the date range
+        var checkinCheckoutLogs = await _unitOfWork.GetAsyncRepository<CheckinCheckoutLogs>()
+            .ListAllAsync();
+        checkinCheckoutLogs = checkinCheckoutLogs
+            .Where(log => log.UserId == userId &&
+                          log.CheckinTime.HasValue &&
+                          log.CheckinTime.Value.Date >= startDate.Date &&
+                          log.CheckinTime.Value.Date <= endDate.Date)
+            .ToList();
+
+        // Fetch employee details for the specific user
+        var employeeDetails = await _unitOfWork.GetAsyncRepository<EmployeeDetail>()
+            .ListAllAsync();
+        employeeDetails = employeeDetails.Where(emp => emp.UserId == userId).ToList();
+
+        foreach (var employee in employeeDetails)
+        {
+            var attendanceByDay = new Dictionary<string, Dictionary<int, string>>();
+
+            for (DateTime date = startDate; date <= endDate; date = date.AddDays(1))
+            {
+                var year = date.Year;
+                var monthName = date.ToString("MMMM");
+                var day = date.Day;
+
+                // Determine attendance status
+                string attendanceStatus;
+                if (date > today)
+                {
+                    attendanceStatus = null; // Future dates
+                }
+                else
+                {
+                    var log = checkinCheckoutLogs.FirstOrDefault(l => l.CheckinTime.Value.Date == date);
+                    attendanceStatus = log != null && log.CheckoutTime.HasValue ? "Present" : "Absent";
+                }
+
+                // Initialize month dictionary if not present
+                if (!attendanceByDay.ContainsKey(monthName))
+                {
+                    attendanceByDay[monthName] = new Dictionary<int, string>();
+                }
+
+                // Set the attendance status for the day
+                attendanceByDay[monthName][day] = attendanceStatus;
+            }
+
+            result.Add(new GetAllAttendanceVM
+            {
+                UserId = employee.UserId,
+                EmployeeId = employee.Id,
+                FullName = $"{employee.FirstName} {employee.LastName}",
+                ProfileImage = employee.Image,
+                AttendanceByMonthDay = attendanceByDay 
+            });
+        }
+
+        return new MasterResponseVM<List<GetAllAttendanceVM>>(200, "Success", result);
+    }
+    catch (Exception ex)
+    {
+        ApplicationLogger.CreateLog(ex.Message, 2);
+        return new MasterResponseVM<List<GetAllAttendanceVM>>(500, "Error", null);
+    }
+}
+
